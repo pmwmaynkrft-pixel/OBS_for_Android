@@ -72,6 +72,16 @@ build_jansson() {
     -DJANSON_BUILD_DOC=OFF
 }
 
+build_nlohmann_json() {
+  # Header-only JSON used by OBS frontend/plugin manager; install its CMake package too.
+  local s; s=$(src_dir nlohmann_json)
+  _run_cmake "$s" \
+    -DJSON_BuildTests=OFF \
+    -DJSON_Install=ON
+  mkdir -p "$PREFIX/share/licenses/nlohmann_json"
+  cp "$s/LICENSE.MIT" "$PREFIX/share/licenses/nlohmann_json/"
+}
+
 build_libusb() {
   # libusb 1.0.28 源码树无 CMakeLists.txt（CMake 支持仅存在于 git master），走 autotools
   _autoconf_dep libusb --disable-udev --disable-examples-build
