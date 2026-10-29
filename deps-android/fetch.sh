@@ -11,7 +11,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=versions.sh
 source "$HERE/versions.sh"
 
-PROXY="${OBS_PROXY:-http://127.0.0.1:7892}"
+# 默认沿用 WSL 主机代理；OBS_PROXY 显式设为空时直连（供 GitHub Actions 等 CI 使用）。
+PROXY="${OBS_PROXY-http://127.0.0.1:7892}"
 SRC="$HERE/src"
 mkdir -p "$SRC"
 
@@ -41,13 +42,12 @@ for d in $TARGETS; do
     echo "[CACHE] $d ($ver) 已存在"
     continue
   fi
-  prox=""
+  prox=()
   case "$url" in
-    *github.com*) prox="-x $PROXY" ;;
+    *github.com*) [ -z "$PROXY" ] || prox=(-x "$PROXY") ;;
   esac
   echo "[GET ] $d $ver -> $fn"
-  # shellcheck disable=SC2086
-  if ! curl -fL --retry 3 --retry-delay 2 -C - -sS $prox -o "$out.part" "$url"; then
+  if ! curl -fL --retry 3 --retry-delay 2 -C - -sS "${prox[@]}" -o "$out.part" "$url"; then
     echo "[FAIL] $d 下载失败：$url"
     rm -f "$out.part"; FAIL="$FAIL $d"; continue
   fi
