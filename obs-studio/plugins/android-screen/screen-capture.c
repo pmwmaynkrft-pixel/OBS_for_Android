@@ -114,6 +114,9 @@ struct screen_source {
 
 	uint64_t frames_out;
 	uint64_t frames_dropped;
+	/* Sparse diagnostic sample: callback cadence and one output-submit duration every 300 frames. */
+	uint64_t perf_window_start_ns;
+	uint64_t perf_window_start_frames;
 	char last_error[256];
 };
 
@@ -225,9 +228,32 @@ static void push_frame(struct screen_source *c, AImage *image)
 					  "这条链采样存储 alpha，见本函数上面那段");
 	}
 
+	const uint64_t frame_number = c->frames_out + 1;
+	const bool perf_sample = (frame_number % 300) == 0;
+	const uint64_t submit_start_ns = perf_sample ? os_gettime_ns() : 0;
 	obs_source_output_video(c->source, &out);
+	const uint64_t submit_end_ns = perf_sample ? os_gettime_ns() : 0;
 
 	c->frames_out++;
+	if (!c->perf_window_start_ns) {
+		c->perf_window_start_ns = out.timestamp;
+		c->perf_window_start_frames = c->frames_out;
+	}
+	if (perf_sample) {
+		const uint64_t elapsed_ns = out.timestamp - c->perf_window_start_ns;
+		const uint64_t window_frames = c->frames_out - c->perf_window_start_frames;
+		const double delivered_fps = elapsed_ns ? (double)window_frames * 1000000000.0 / (double)elapsed_ns : 0.0;
+		const uint64_t submit_us = (submit_end_ns - submit_start_ns) / 1000ULL;
+		blog(LOG_INFO,
+		     "android-screen-perf: delivered_frames=%llu window_ms=%llu delivered_fps=%.2f "
+		     "sampled_submit_us=%llu frame=%ux%u logical_bytes=%llu local_error_frames=%llu",
+		     (unsigned long long)window_frames, (unsigned long long)(elapsed_ns / 1000000ULL), delivered_fps,
+		     (unsigned long long)submit_us, (unsigned)out.width, (unsigned)out.height,
+		     (unsigned long long)((uint64_t)out.width * (uint64_t)out.height * 4ULL),
+		     (unsigned long long)c->frames_dropped);
+		c->perf_window_start_ns = out.timestamp;
+		c->perf_window_start_frames = c->frames_out;
+	}
 	if (c->frames_out == 1)
 		obs_source_update_properties(c->source); // 属性页那句状态是"打开对话框那一刻"的快照
 }
@@ -520,6 +546,8 @@ static bool open_capture(struct screen_source *c)
 	c->opened_ns = os_gettime_ns();
 	c->frames_at_open = c->frames_out;
 	c->no_frame_warned = false;
+	c->perf_window_start_ns = 0;
+	c->perf_window_start_frames = 0;
 
 	if (!obs_android_screen_display_size(&w, &h, &dpi)) {
 		set_error(c, "问不到屏幕尺寸（总线未接线，或 Java 侧读不到显示模式）");
